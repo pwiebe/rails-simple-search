@@ -103,12 +103,24 @@ module RailsSimpleSearch
   
     def run_criteria
       return unless @conditions.nil? 
+      @conditions = []
       @criteria.each do |key, value|
         if @config[:page_name].to_s == key.to_s
           @page = value.to_i
           @criteria[key] = @page
+        elsif key == :or
+          or_condition = []
+          value.each do |k,v|
+            parse_attribute(k, v, or_condition, :or)
+          end
+          if or_condition.size > 1
+            #puts "OR : #{or_condition} "
+            @conditions[0] += ' and ( ' + or_condition[0] + ' )'
+            @conditions += or_condition[1..-1]
+            #puts "CONDITION: #{@conditions}"
+          end
         else
-          parse_attribute(key, value)
+          parse_attribute(key, value, @conditions, :and)
         end
       end
 
@@ -134,7 +146,7 @@ module RailsSimpleSearch
     end
 
 
-    def insert_condition(base_class, attribute, field, value)
+    def insert_condition(base_class, attribute, field, value, conditions, and_or = :and)
       name_hash = parse_field_name(field)
       field = name_hash[:field_name]
       operator = name_hash[:operator]
@@ -142,12 +154,13 @@ module RailsSimpleSearch
       table = base_class.table_name
       key = "#{table}.#{field}"
   
-      @conditions ||= []
+      #conditions ||= []
       column = base_class.columns_hash[field.to_s]
 
       if !column.text? && value.is_a?(String)
         value = column.type_cast(value)
-        @criteria[attribute] = value 
+      # PJW  Why?  This won't work for nested conditions
+      #  @criteria[attribute] = value
       end
 
       if value.nil?
@@ -155,18 +168,18 @@ module RailsSimpleSearch
       elsif operator
         verb = operator
       elsif column.text? && ! @config[:exact_match].include?((@table_name == table)? field : key)
-        verb = 'like'
+        verb = 'ilike'
         value = "%#{value}%"
       else
         verb = '='
       end
 
-      if @conditions.size < 1
-        @conditions[0] = "#{key} #{verb} ?"
-        @conditions[1] = value
+      if conditions.size < 1
+        conditions[0] = "#{key} #{verb} ?"
+        conditions[1] = value
       else
-        @conditions[0] += " and #{key} #{verb} ?"
-        @conditions << value
+        conditions[0] += " #{and_or} #{key} #{verb} ?"
+        conditions << value
       end
     end     
   
@@ -187,10 +200,10 @@ module RailsSimpleSearch
       end
     end
   
-    def parse_attribute(attribute, value)
+    def parse_attribute(attribute, value, conditions, and_or = :and)
       unless attribute =~ /\./
         field = attribute
-        insert_condition(@model_class, attribute, field, value)
+        insert_condition(@model_class, attribute, field, value, conditions, and_or)
         return
       end 
 
@@ -198,13 +211,13 @@ module RailsSimpleSearch
       field = association_fields.pop
 
       base_class = @model_class
-      while (association_fields.size > 0) 
+      while association_fields.size > 0
         association_fields[0] = base_class.reflect_on_association(association_fields[0].to_sym)
         insert_join(base_class, association_fields[0])
         base_class = association_fields.shift.klass
       end
 
-      insert_condition(base_class, attribute, field, value)
+      insert_condition(base_class, attribute, field, value, conditions, and_or)
     end
   
     def sanitize_criteria
