@@ -75,7 +75,8 @@ module RailsSimpleSearch
       .where(@conditions).offset(offset).limit(limit)
 
       execute_relation = execute_relation.order(@order) if @order
-      execute_relation.to_a
+
+      execute_relation
     end
 
     private
